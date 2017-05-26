@@ -1,5 +1,6 @@
 extern crate clap;
 extern crate handlebars;
+extern crate indicatif;
 extern crate rls_analysis as analysis;
 
 use analysis::raw::DefKind;
@@ -14,6 +15,7 @@ use std::io;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
+use std::thread;
 
 struct Config {
     manifest_path: PathBuf,
@@ -127,6 +129,26 @@ fn build(config: &Config) -> Result<(), Box<std::error::Error>> {
 
 fn generate_analysis(manifest_path: &Path)
                      -> Result<analysis::AnalysisHost, Box<std::error::Error>> {
+    let style = indicatif::ProgressStyle::default_spinner()
+        .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+        .template("{spinner} {msg}");
+    let bar = indicatif::ProgressBar::new_spinner();
+    bar.set_style(style);
+    bar.set_message("Generating save-analysis data");
+
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    thread::spawn(move || {
+        loop {
+            bar.tick();
+
+            if let Ok(_) = rx.try_recv() {
+                bar.finish();
+                break;
+            }
+        }
+    });
+
     let mut command = Command::new("cargo");
 
     let manifest_path = manifest_path.to_str().unwrap();
@@ -142,11 +164,8 @@ fn generate_analysis(manifest_path: &Path)
     command.stdout(Stdio::null());
     command.stderr(Stdio::null());
 
-    print!("generating save analysis data...");
-    io::stdout().flush()?;
-
     command.spawn()?.wait()?;
-    println!("done.");
+    tx.send(())?;
 
     print!("loading save analysis data...");
     io::stdout().flush()?;
